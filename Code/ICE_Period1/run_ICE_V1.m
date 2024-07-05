@@ -1,0 +1,154 @@
+% %返回最终推测聚类
+% function [ ypred ] = run_ICE(Hoi,idx_u)
+% %Hoi        1*10cell 10个基聚类器
+% %idx_input  1*10cell 每个基聚类器缺失的id
+% 
+% ensemblesize = length(Hoi);%选取基聚类器的数目
+% datasize=size(Hoi{1}, 1);%数据的数量
+% cnum = zeros(ensemblesize, 1);%基聚类器各自的簇数
+% for i=1:ensemblesize
+%     cnum(i)=size(Hoi{i}, 2);
+% end
+% 
+% %初始化缺失行Yu(i) ->后续可以考虑下先初始化缺失行还是初始化CA（这样写的话肯定是先初始化，可以考虑下第一步更新不更新A，采用为初始化缺失行计算出来的A）
+% %这一步是必须的，否则缺失行的数值全部为0，则根据更新公式，后续永远不会有值
+% for i=1:ensemblesize
+%     for rowIndex = idx_u{i}
+%         Hoi{i}(rowIndex, :) = 1/cnum(i);
+%     end
+% end
+% 
+% %初始化A，CA矩阵
+% %计算10个基聚类器得到的CA矩阵的平均，作为A的初始值
+% A = zeros(datasize, datasize);%创建全零数组,大小100*100
+% for i=1:ensemblesize
+%     A=A+Hoi{i}*Hoi{i}';
+% end
+% A=A./ensemblesize;
+% 
+% %初始化alpha，对基聚类器的加权
+% %初始时设置每个基聚类器的权重都相同（后续可以按照不同基聚类器的缺失率大小进行处理？）
+% alpha=(1/ensemblesize).*ones(ensemblesize,1);
+% 
+% %初始化sigma(lamda)，对基聚类器中簇的加权
+% %初始时设置基聚类器中簇的加权都相同
+% lamda = cell(ensemblesize, 1);%创建一个大小为 1x基聚类器数 的空cell数组
+% for i = 1:ensemblesize
+%     % 创建第 i 个向量
+%     vector=(1/cnum(i)).*ones(1, cnum(i));
+%     lamda{i} = vector;  % 将向量存储在 cell 数组的第 i 个元素中
+% end
+% 
+% opt=[];%创建了一个空的结构体变量 opt
+% opt.Display='none';%在 opt 结构体中创建一个名为 Display 的字段，并将其值设置为 'none'
+% 
+% maxiter=20;%预设迭代次数
+% for iternum=1:maxiter%迭代次数
+%     %update A
+%     A = zeros(size(A));
+%     for i=1:ensemblesize
+%         A=A+alpha(i)*Hoi{i}*diag(lamda{i})*Hoi{i}';
+%     end
+% 
+%     %update Y
+%     %依次更新各个基聚类器缺失值
+%     for i=1:ensemblesize
+%         %计算当前B取值
+%         B=zeros(datasize, datasize);
+%         %遍历j!=i的基聚类器
+%         for j=1:ensemblesize
+%             if j==i
+%                 continue
+%             else
+%                 B=B+alpha(j)*Hoi{j}*diag(lamda{j})*Hoi{j}';
+%             end
+%         end
+% 
+%         X1=A*Hoi{i};
+%         X2=B*Hoi{i};
+%         X3=Hoi{i}*(diag(lamda{i})*(Hoi{i}'*Hoi{i}));
+% 
+%         %依次更新每个缺失行的值
+%         for j = idx_u{i}%选取第i个基聚类器中的缺失行
+%             for k=1:cnum(i)%遍历缺失行的元素
+%                 if Hoi{i}(j,k)==0
+%                     continue
+%                 else
+%                     numerator=X1(j,k);%分子
+%                     denominator=(X2(j,k)*Hoi{i}(j,k)^3 + alpha(i)*X3(j,k));%分母
+%                     res=((numerator/denominator)^(1/4));
+%                     Hoi{i}(j,k)=Hoi{i}(j,k)*res;
+%                 end
+%             end
+%             %归一化，使得缺失行的元素和仍然为1
+%             yui_sum = sum(Hoi{i}(j, :));
+%             Hoi{i}(j, :) = Hoi{i}(j, :) ./ yui_sum;
+%         end
+%     end
+% 
+%     %update sigma(lamda)
+%     %依次更新各个基聚类器簇的权重 (是一步一步更新，还是完成之后再一起更新？)
+%     for i=1:ensemblesize
+%         %计算当前B取值
+%         B=zeros(datasize, datasize);
+%         %遍历j!=i的基聚类器
+%         for j=1:ensemblesize
+%             if j==i
+%                 continue
+%             else
+%                 B=B+alpha(j)*Hoi{j}*diag(lamda{j})*Hoi{j}';
+%             end
+%         end
+% 
+%         %只需要计算对角线的取值(后续这里可以优化复杂度)
+%         X1=Hoi{j}'*A*Hoi{j};
+%         X2=Hoi{j}'*B*Hoi{j};
+%         X3=0.5*alpha(i)*Hoi{j}'*Hoi{j}*diag(lamda{i})*Hoi{j}'*Hoi{j};
+% 
+%         for j=1:cnum(i)
+%             lamda{i}(j)=X1(j,j)/(X2(j,j)+X3(j,j));
+%         end
+% 
+%         %归一化，使得簇的权重和仍然为1
+%         lamda_sum = sum(lamda{i});
+%         lamda{i} = lamda{i} ./ lamda_sum;
+%     end
+% 
+%     %update alpha 更新基聚类权重
+%     for i=1:ensemblesize
+%         C{i}=Hoi{i}*diag(lamda{i})*Hoi{i}';%Y*sigma*Y'
+%     end
+%     G=-inf.*ones(ensemblesize,ensemblesize);%创建大小为ensemblesize*ensemblesize矩阵
+%     %求秩即是求C和C的按元素乘
+%     for i=1:ensemblesize
+%         for j=i:ensemblesize
+%             G(i,j)=sum(sum(C{i}.*C{j}));%计算求得矩阵的全部元素和
+%         end
+%     end
+%     G=max(G,G');%返回从G或G转置中提取的最大元素的数组（因为上述的G只更新了下半部分，通过这个方法可以避免重复计算）
+%     f=zeros(ensemblesize,1);%创建大小为ensemblesize*1矩阵
+%     for j=1:ensemblesize
+%         f(j)=-sum(sum(A.*C{j}));%这里负号是为了满足quadprog公式
+%     end
+%     %使用二次规划函数求解
+%     %传入G f
+%     %alpha之和为1
+%     %alpha范围在[0,1]之间
+%     %从向量alpha开始求解问题
+%     %使用opt中指定的优化选项求解上述问题
+%     alpha=quadprog(G,f, [],[], ones(1,ensemblesize),1, zeros(ensemblesize,1),ones(ensemblesize,1), alpha,opt);
+% end
+% 
+% %得到预测CA矩阵 A
+% K=10;%希望得到的簇数(?)
+% s = squareform(A - diag(diag(A)),'tovector');%squareform函数 将原始矩阵转换为一维向量（对角线元素处理为0）
+% d = 1 - s;%转化为距离矩阵
+% 
+% %linkage函数执行层次聚类，生成聚集层次聚类树，但并未指定最终的聚类数
+% %cluster函数结合 maxclust 参数来指定最终的聚类数K，从聚类树中选择最佳的聚类划分，将数据集分配到K个聚类中
+% results = zeros(datasize,1);%记录聚类集成结果
+% results = cluster(linkage(d,'average'),'maxclust',K);
+% 
+% ypred=results;
+% 
+% end
